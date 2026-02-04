@@ -152,3 +152,106 @@ df_total_melt = df_total_melt.sort_values(by='sample')
 df_total_melt = df_total_melt.reset_index(drop=True)
 df_total_melt['percentage'] = df_total_melt['count'] / df_total_melt['total_count']
 summary_table = df_total_melt[['sample', 'total_count', 'population', 'count', 'percentage']]
+
+### Part 3 ================================================================================================================================
+#Retrieve table from database
+with sqlite3.connect('Loblaw_Bio_cell_count.db') as conn:
+    df_subjects = pd.read_sql_query('SELECT * FROM subject_table', conn)
+    df_project = pd.read_sql_query('SELECT * FROM project_table', conn)
+
+df_master = pd.merge(df_total_melt, df_subjects, on='subject', how='inner')
+df_master = pd.merge(df_master, df_project, on='project', how='inner')
+
+# Filtering according to requirements
+filtered_df = df_master[
+    (df_master['treatment'] == 'miraclib') & 
+    (df_master['condition'] == 'melanoma') &
+    (df_master['sample_type'] == 'PBMC')
+]
+
+# Analysis wrapped with Streamlit for dashboard. 
+tab1, tab2, tab3, tab4 = st.tabs([
+    'Project Documentation', 
+    'Initial Analysis', 
+    'Statistical Analysis', 
+    'Data Subset Analysis'
+])
+
+with tab2:
+	st.header('Part 2: Initial Analysis - Data Overview')
+	st.dataframe(summary_table, width='stretch')
+     
+	st.markdown("""
+	### Notes
+             Similar to the logic behind keeping 'sbj' included in the numbers, 'sample' is still kept in the values to allow for a more flexible scale-up, 
+             as there is no guarantee that the prefix used will always be 'sample', especially when introducing data/samples from external vendors/labs when scaling up. 
+             Keeping 'sample' in the value will help distinguish between different prefix labels in the future while still allowing the values to be sorted in numerical order.
+	""")
+    
+with tab3:
+    st.header('Part 3: Statistical Analysis')
+    
+    # We remove the columns here so the plot takes the full width
+    # Row 1: The Plot
+    st.subheader('Population Distribution Boxplot')
+    fig, ax = plt.subplots(figsize=(12, 6))
+    sns.boxplot(
+        data=filtered_df, 
+        x='population', 
+        y='percentage', 
+        hue='response',
+        palette={'yes': '#1ff802', 'no': '#ff1900'},
+        ax=ax
+    )
+    plt.xlabel("Immune Cell Population", fontsize=12)
+    plt.ylabel("Frequency (Relative %)", fontsize=12)
+    st.pyplot(fig)
+
+    st.divider()
+
+    # Row 2: Summary Table and Explanation
+    # We create new columns here to place the table and text side-by-side below the plot
+    col_table, col_text = st.columns([1, 1])
+
+    with col_table:
+        st.subheader('Statistical Significance Summary')
+
+        populations = filtered_df['population'].unique()
+        stats_results = []
+
+        for cell in populations:
+            response_yes = filtered_df[(filtered_df['population'] == cell) & (filtered_df['response'] == 'yes')]
+            response_no = filtered_df[(filtered_df['population'] == cell) & (filtered_df['response'] == 'no')]
+
+            t_stat, p_val = stats.ttest_ind(response_yes['percentage'], response_no['percentage'], equal_var=False)
+
+            verdict = 'Significant' if p_val < 0.05 else 'NOT Significant'
+
+            stats_results.append({
+                'Population': cell,
+                'p_value': p_val,
+                'verdict': verdict
+            })
+
+        stats_df = pd.DataFrame(stats_results)
+
+        st.dataframe(
+            stats_df,
+            hide_index=True,
+            width='stretch',
+            column_config={
+                "p_value": st.column_config.NumberColumn("p-value", format="%.4f"),
+                "verdict": st.column_config.TextColumn("Verdict")
+            }
+        )
+
+    with col_text:
+        st.markdown("### Explanation of Results")
+        st.write("""
+        The boxplot above visualizes the distribution of cell frequencies for responders (green)
+        versus non-responders (red). The table summarizes Welch's t-tests for each population.
+
+        Based on the results, the cd4_t_cell population is statistically significant, while
+        b_cell, nk_cell, monocyte, and cd8_t_cell are not.
+        This suggests cd4_t_cell may be a promising biomarker for further investigation.
+        """)
