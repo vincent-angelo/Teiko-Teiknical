@@ -132,3 +132,23 @@ def initialize_database(csv_path, db_path):
 	return conn
 
 conn = initialize_database(csv_path, db_path)
+
+### Part 2 ================================================================================================================================
+#Retrieve table from database
+df_samples = pd.read_sql_query('SELECT * FROM sample_table', conn)
+df_samples_total = df_samples.copy()
+df_samples_total['total_count'] = df_samples_total[['b_cell', 'cd8_t_cell', 'cd4_t_cell', 'nk_cell', 'monocyte']].sum(axis = 1)
+
+#Melt relevant columns and some minor edits for intuitiveness
+melt_cols = ['b_cell', 'cd8_t_cell', 'cd4_t_cell', 'nk_cell', 'monocyte']
+df_total_melt = pd.melt(df_samples_total, 
+                        id_vars = [c for c in df_samples_total.columns if c not in melt_cols],
+                        value_vars = melt_cols,
+                        var_name='population',
+                        value_name='count'
+                        )
+
+df_total_melt = df_total_melt.sort_values(by='sample')
+df_total_melt = df_total_melt.reset_index(drop=True)
+df_total_melt['percentage'] = df_total_melt['count'] / df_total_melt['total_count']
+summary_table = df_total_melt[['sample', 'total_count', 'population', 'count', 'percentage']]
